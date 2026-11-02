@@ -370,6 +370,37 @@ STEP_COLS = ['pair', 'pre', 'post', 'pre_send_time', 'trigger_time', 'post_send_
              'power_before', 'power_after', 'npz']
 
 
+def on_width(pct):
+    # drain low (MOSFET on) time per PWM period for a commanded duty %, after the firmware's 8-bit truncation
+    # 指令 Duty % のときの 1 周期あたりのドレインの Low（MOSFET ON）時間。ファームの 8 bit 切り捨て込み
+    return (int(pct / 100 * 255) / 255) / E.F_PWM
+
+
+def arm_step_trigger(sc, pre, post, level=0.45):
+    # make the duty step itself trigger the scope (no PC timing involved); level 0.45 V works with and without
+    # the propeller (drain ~0 V while on, >= ~0.9 V while off)
+    # 段差そのものでオシロをトリガさせる（PC のタイミングに頼らない）。0.45 V はプロペラの有無によらず使える
+    # （ON 中のドレインは約 0 V、OFF 中は約 0.9 V 以上）
+    if pre == 0:                                   # first on-pulse of the spin-up / 回し始めの最初の ON パルス
+        cmds = [':TRIG:MODE EDGE', ':TRIG:EDG:SOUR CHAN1', ':TRIG:EDG:SLOP NEG', f':TRIG:EDG:LEV {level}']
+    elif post == 0:                                # spin-down: trigger on the running PWM, stop 0.4 s later (as exp_coast)
+        # スピンダウン: 回転中の PWM でトリガし、0.4 秒後に止める（exp_coast と同じ。2026-11-02 に動作確認）
+        cmds = [':TRIG:MODE EDGE', ':TRIG:EDG:SOUR CHAN1', ':TRIG:EDG:SLOP NEG', f':TRIG:EDG:LEV {level}']
+    else:
+        mid = (on_width(pre) + on_width(post)) / 2
+        if post > pre:                             # first on-pulse longer than the midpoint / 中間より長い最初の ON パルス
+            cmds = [':TRIG:MODE PULS', ':TRIG:PULS:SOUR CHAN1', ':TRIG:PULS:WHEN NGR', f':TRIG:PULS:WIDT {mid:.4e}']
+        else:                                      # shorter than the midpoint, but not a ringing glitch / 中間より短く、ノイズより長い
+            # upper limit first: the scope requires lower < upper at every moment / 上限を先に（常に下限 < 上限が必要）
+            cmds = [':TRIG:MODE PULS', ':TRIG:PULS:SOUR CHAN1', ':TRIG:PULS:WHEN NGL',
+                    f':TRIG:PULS:UWID {mid:.4e}', f':TRIG:PULS:LWID {on_width(post) / 2:.4e}']
+        cmds.append(f':TRIG:PULS:LEV {level}')
+    for c in cmds:
+        sc.w(c)
+    time.sleep(0.2)
+    return ' '.join(cmds)
+
+
 def run_steps(a, ctl, sc, stop):
     # duty steps: pre duty -> single long capture -> force trigger -> post duty -> read out / 段差 1 つずつ
     fcsv = open(E.OUT / 'steps.csv', 'w', newline=''); w = csv.DictWriter(fcsv, STEP_COLS); w.writeheader()
@@ -396,9 +427,10 @@ def run_steps(a, ctl, sc, stop):
     # scope setup as exp_coast: falling edge on CH1, single, trigger near the left edge / exp_coast と同じ設定
     sc.w(':RUN')
     sc.w(':CHAN1:SCAL 1.25'); sc.w(':CHAN1:OFFS -3.25'); sc.w(':CHAN2:SCAL 0.5'); sc.w(':CHAN2:OFFS -3.5')
-    sc.w(':TRIG:MODE EDGE'); sc.w(':TRIG:EDG:SOUR CHAN1'); sc.w(':TRIG:EDG:SLOP NEG'); sc.w(':TRIG:EDG:LEV 2.0')
     sc.w(':TRIG:SWE NORM')
-    sc.w(f':TIM:MAIN:SCAL {a.tb}'); sc.w(f':TIM:MAIN:OFFS {5.5 * a.tb}')
+    # trigger 1.5 div from the left edge: the record spans -1.5 div .. +10.5 div around it
+    # トリガを左端から 1.5 目盛りに置く。記録はその前 1.5 目盛り、後 10.5 目盛り
+    sc.w(f':TIM:MAIN:SCAL {a.tb}'); sc.w(f':TIM:MAIN:OFFS {4.5 * a.tb}')
     time.sleep(0.5); sc.w(f':ACQ:MDEP {a.mdep}'); time.sleep(1.0)
     for k, (pre, post) in enumerate(a.step_list, 1):
         if stop.is_set():
@@ -411,8 +443,25 @@ def run_steps(a, ctl, sc, stop):
         row['power_before'] = ctl.power() or ''
         if a.dry_run:
             sc.step = (pre / 100, post / 100)
-        sc.w(':SING'); sc.w(':TFOR'); row['trigger_time'] = f'{time.time():.2f}'
-        time.sleep(0.1)
+        # arming over LAN takes 0.1-0.2 s or more: set a trigger that only the step can satisfy, wait until the
+        # scope is armed (WAIT), then send the step; force a trigger only as a fallback after 3 s
+        # LAN 越しの待ち受け開始は 0.1〜0.2 秒以上かかる: 段差でしか成り立たないトリガを設定し、待ち受け（WAIT）を
+        # 確かめてから段差を送る。3 秒たっても待ち受けにならなければ強制トリガ
+        trig = arm_step_trigger(sc, pre, post)
+        ctl.event('trigger_setup', trig, f'pair{k}')
+        sc.w(':SING'); t_sing = time.time(); scope_st = ''
+        if pre > 0 and post == 0:                  # spin-down: the running PWM triggers at once / 回転中の PWM ですぐトリガ
+            time.sleep(0.4); scope_st = 'spin-down 0.4 s'
+        else:
+            while time.time() - t_sing < 3.0:      # armed and waiting: the step will trigger it / 待ち受け中なら段差でトリガする
+                scope_st = sc.q(':TRIG:STAT?')
+                if scope_st in ('WAIT', 'TD', 'STOP'):
+                    break
+                time.sleep(0.02)
+            else:
+                sc.w(':TFOR'); scope_st = 'forced'
+        row['trigger_time'] = f'{time.time():.2f}'
+        ctl.event('scope_state', scope_st, f'pair{k} {time.time() - t_sing:.2f}s after SING')
         row['post_send_time'] = f'{set_duty(post, f"pair{k} post"):.2f}'
         t0 = time.time()
         for _ in range(int((a.tb * 12 + 20) / 0.1)):             # wait for STOP / STOP を待つ
@@ -429,6 +478,8 @@ def run_steps(a, ctl, sc, stop):
         np.savez(E.OUT / name, t=t, v1=v1, v2=v2, mode='step', pre=pre, post=post); row['npz'] = name
         w.writerow(row); fcsv.flush()
         ctl.event('step_done', f'pair{k} {pre}to{post}', f"readout={row['readout_s']}s")
+    # leave an ordinary edge trigger behind for the next script / 次のスクリプトのため普通のエッジトリガに戻す
+    sc.w(':TRIG:MODE EDGE'); sc.w(':TRIG:EDG:SOUR CHAN1'); sc.w(':TRIG:EDG:SLOP NEG'); sc.w(':TRIG:EDG:LEV 2.0')
     sc.w(':TRIG:SWE AUTO'); sc.w(':RUN')
     fcsv.close()
 
@@ -501,7 +552,8 @@ def main():
     try:
         if a.cmd == 'cycle':
             if not a.dry_run:
-                E.setup(sc, 'pwm'); sc.w(f':ACQ:MDEP {a.mdep}'); time.sleep(1.5)
+                E.setup(sc, 'pwm'); sc.w(':TRIG:MODE EDGE'); sc.w(':TRIG:EDG:SOUR CHAN1'); sc.w(':TRIG:EDG:SLOP NEG')
+                sc.w(':TRIG:EDG:LEV 2.0'); sc.w(f':ACQ:MDEP {a.mdep}'); time.sleep(1.5)
                 try:
                     info['scope_srate'] = sc.q(':ACQ:SRAT?')
                 except Exception:
