@@ -342,6 +342,50 @@ class CycleWorker(threading.Thread):
         if vdd < a.vmin and not self.stop.is_set():
             self.ctl.event('stop_reason', f'VDD {vdd:.3f} V < vmin {a.vmin} V')
             self.stop.set()
+        if a.ke_probe and not self.stop.is_set():
+            ke_probe(a, self.ctl, sc, job, self.stop)
+
+
+def ke_probe(a, ctl, sc, job, stop):
+    # in-step K_e: stop the PWM for about 0.1 s, then restart at the same duty. With no current the terminal voltage is
+    # K_e*omega, so a capture of the coast gives K_e at this step's time and temperature. The trigger is a positive
+    # drain pulse longer than 20 us (only the coast is that long; PWM off-times are below 6.7 us), which completes at
+    # the restart; the trigger sits near the right edge so the record holds the stop and the coast before it.
+    # 段の中の K_e: PWM を約 0.1 秒止めて、同じ Duty で再開する。電流 0 の間は端子電圧 = K_e·ω なので、惰性の
+    # 取り込みから、この段の時刻・温度の K_e が分かる。トリガは 20 us より長いドレインの High（惰性だけがこの長さ。
+    # PWM の OFF は 6.7 us 未満）で、再開の瞬間に成立する。トリガを右端近くに置き、止めた瞬間と惰性を記録に入れる
+    left = job['t_start'] + a.step_sec - time.time()
+    if left < 7.0:                                        # not enough time left in this step / 段の残りが足りない
+        ctl.event('ke_probe_skipped', f"lap{job['lap']} step{job['step']}", f'{left:.1f}s left')
+        return
+    target = 'all' if a.all_motors else f'test {a.motor}'
+    name = f"{a.tag}_L{job['lap']}_S{job['step']:02d}_ke.npz"
+    with SCOPE_LOCK:
+        for c in (':TRIG:MODE PULS', ':TRIG:PULS:SOUR CHAN1', ':TRIG:PULS:WHEN PGR', ':TRIG:PULS:WIDT 2e-5',
+                  ':TRIG:PULS:LEV 0.45', ':TRIG:SWE NORM', ':TIM:MAIN:SCAL 0.01', ':TIM:MAIN:OFFS -0.05'):
+            sc.w(c)
+        time.sleep(0.4)
+        sc.w(':SING'); time.sleep(0.8)                     # the scope accepts a trigger ~0.45 s after SING / 受け付けまで約 0.45 s
+        t_stop = ctl.send('motor stop', f"ke probe stop lap{job['lap']} step{job['step']}")
+        time.sleep(a.probe_gap)
+        rest = max(2.0, job['t_start'] + a.step_sec - time.time() + 2)
+        t_re = ctl.send(f"motor {target} {job['duty']} {rest:.1f}", f"ke probe restart lap{job['lap']} step{job['step']}")
+        state = ''
+        for k in range(60):
+            state = sc.q(':TRIG:STAT?')
+            if state == 'STOP':
+                break
+            time.sleep(0.05)
+        else:
+            sc.w(':TFOR'); time.sleep(0.3); state = 'forced'
+        t, v1, _ = sc.grab_raw(1); _, v2, _ = sc.grab_raw(2)
+        # back to the steady capture settings / 定常の取り込みの設定に戻す
+        for c in (':RUN', ':TRIG:MODE EDGE', ':TRIG:EDG:SOUR CHAN1', ':TRIG:EDG:SLOP NEG', ':TRIG:EDG:LEV 2.0',
+                  ':TRIG:SWE AUTO', ':TIM:MAIN:SCAL 2e-3', ':TIM:MAIN:OFFS 0'):
+            sc.w(c)
+        time.sleep(0.3); sc.w(f':ACQ:MDEP {a.mdep}'); time.sleep(0.5)
+    np.savez(E.OUT / name, t=t, v1=v1, v2=v2, mode='ke_probe', t_stop=t_stop, t_restart=t_re, duty=job['duty'])
+    ctl.event('ke_probe', f"lap{job['lap']} step{job['step']}", f'{name} state={state}')
 
 
 def sleep_until(t, stop):
@@ -562,7 +606,10 @@ def main():
     # 60k: capture + readout about 3.1 s on the DS1054Z (600k took 7.4 s, too long for a 5-s step; measured 2026-11-02)
     # 60k: 取り込みと読み出しで約 3.1 秒（600k は 7.4 秒で 5 秒の段に収まらない。2026-11-02 実測）
     c.add_argument('--mdep', type=int, default=60000, help='scope memory depth for the PWM capture / PWM 取り込みのメモリ長')
-    c.add_argument('--section', default='A', choices=['A', 'B', 'C'])
+    c.add_argument('--section', default='A', choices=['A', 'B', 'C', 'E'])
+    c.add_argument('--ke-probe', action='store_true',
+                   help='stop the PWM ~0.1 s in every step and capture the coast for K_e / 各段で PWM を約 0.1 s 止めて K_e 用に取り込む')
+    c.add_argument('--probe-gap', type=float, default=0.08, help='seconds between stop and restart / 停止から再開まで [s]')
     c.add_argument('--stop-between-steps', action='store_true',
                    help='zero window after every step instead of between laps (measurement E) / 周ではなく段ごとにゼロ窓')
     c.add_argument('--power-reads', type=int, default=1, help='current readings per step, averaged / 1 段の電流の読み回数（平均）')

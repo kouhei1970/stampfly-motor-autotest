@@ -38,6 +38,10 @@ def cli():
 def main():
     ap = argparse.ArgumentParser(); ap.add_argument('label'); ap.add_argument('--n', type=int, default=3)
     ap.add_argument('--mdep', type=int, default=60000)
+    ap.add_argument('--dither', type=int, default=0,
+                    help='with SCOPE_MATCHED=1: N captures with both offsets stepped by 1/N of a code, averaged '
+                         '(sub-code CH1-CH2 at rest) / 両オフセットを 1 目盛りの 1/N ずつずらして N 回平均')
+    ap.add_argument('--only-dither', action='store_true', help='skip the other settings / ほかの設定を省く')
     E.add_common_args(ap); a = ap.parse_args(); E.apply_common_args(a)
     sc = E.Scope(); E.setup(sc, 'pwm'); sc.w(f':ACQ:MDEP {a.mdep}'); time.sleep(1.5)
     out = E.OUT / 'scope_cal.csv'; new = not out.exists()
@@ -46,8 +50,27 @@ def main():
         if new:
             w.writerow(['wall_time_s', 'label', 'ch1_setting', 'CH1_V', 'CH2_V', 'CH1_minus_CH2_mV', 'CLI_V', 'CLI_minus_CH2_mV', 'CLI_I_A'])
         rows = []
+        if a.dither and E.MATCHED:
+            # offset dithering: a noise-free DC level sits on one 40 mV code; stepping both offsets by 40/N mV moves the
+            # code edges across it, and the mean over N captures resolves the level below one code
+            # オフセットの揺らし: 雑音のない直流は 40 mV の 1 目盛りに固定される。両オフセットを 40/N mV ずつずらすと
+            # 目盛りの境目が動き、N 回の平均で 1 目盛りより細かく値が決まる
+            lsb = 1.0 / 25                       # 1 V/div, 25 codes per division / 1 V/div、1 目盛り 25 コード
+            m1, m2 = [], []
+            for k in range(a.dither):
+                off = -2.25 + k * lsb / a.dither
+                sc.w(f':CHAN1:OFFS {off:.4f}'); sc.w(f':CHAN2:OFFS {off:.4f}'); time.sleep(0.4)
+                c1, c2 = grab(sc); m1.append(c1); m2.append(c2)
+            E.vertical_pwm(sc); time.sleep(0.4)
+            c1, c2 = float(np.mean(m1)), float(np.mean(m2)); cv, ci = cli()
+            row = [f'{time.time():.2f}', a.label, f'matched dither {a.dither}', f'{c1:.4f}', f'{c2:.4f}', f'{1000 * (c1 - c2):+.1f}',
+                   f'{cv:.3f}', f'{1000 * (cv - c2):+.1f}', f'{ci:.4f}']
+            w.writerow(row); f.flush(); rows.append(row); print(' '.join(row[1:]))
+            print('  per offset CH1-CH2 [mV]:', ' '.join(f'{1000 * (x - y):+.1f}' for x, y in zip(m1, m2)))
         for setting, cmds in (('run (matched)' if E.MATCHED else 'run (1.25 V/div, -3.25 V)', []), ('as CH2 (0.5 V/div, -3.5 V)', [':CHAN1:SCAL 0.5', ':CHAN1:OFFS -3.5']),
                               ('1.25 V/div, offset 0', [':CHAN1:SCAL 1.25', ':CHAN1:OFFS 0'])):
+            if a.only_dither:
+                break
             for c in cmds:
                 sc.w(c)
             if cmds:
