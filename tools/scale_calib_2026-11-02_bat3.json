@@ -1,0 +1,99 @@
+{
+ "_comment": "Calibration of read_scale.py for the 2026-11-02 bat3 (four-motor) framing: same digit region and geometry as scale_calib_2026-11-02.json, only the minus-bar boxes differ. Lengths in pixels of a 640x480 frame at scale 1.",
+ "_geometry_notes": "Lengths are pixels at scale 1. Cell coordinates: u right, v down, origin = digit-cell centre. Four cells (tens, ones, tenths, hundredths); cell pitch, slant (italic), tilt (camera roll, px per cell) are refined per frame from the 'starts'. \u9577\u3055\u306f\u62e1\u5927\u7387 1 \u306e\u753b\u7d20\u3002\u30bb\u30eb\u306e\u30d4\u30c3\u30c1\u30fb\u50be\u304d\u30fb\u30ab\u30e1\u30e9\u306e\u56de\u8ee2\u306f 'starts' \u3092\u521d\u671f\u5024\u306b 1 \u679a\u3054\u3068\u306b\u8ffd\u3044\u8fbc\u3080\u3002",
+ "_seg_gain_notes": "Median darkness of a lit segment a..g relative to the 99.5 percentile ink level, measured on about 500 frames; levels are divided by it. \u70b9\u706f\u30bb\u30b0\u30e1\u30f3\u30c8 a..g \u306e\u6a19\u6e96\u7684\u306a\u6fc3\u3055\uff08\u7d04 500 \u679a\u3067\u5b9f\u6e2c\uff09\u3002\u6fc3\u5ea6\u3092\u3053\u308c\u3067\u5272\u308b\u3002",
+ "_threshold_notes": "on_min: lit segment must reach this (gain-normalised); off_max: unlit segment must stay below; dp_on: decimal point; stray_max/faint_max: share of ink (>stray_ink / >faint_ink) outside the predicted segments; cost_max: fit misfit. \u5224\u5b9a\u3057\u304d\u3044\u5024\u3002",
+ "frame_size": [
+  640,
+  480
+ ],
+ "region": {
+  "x0": 300,
+  "x1": 640,
+  "y0": 30,
+  "y1": 228
+ },
+ "bg_box": 41,
+ "min_ink_level": 25,
+ "ink_mask_frac": 0.4,
+ "min_col_px": 3,
+ "min_row_px": 6,
+ "run_gap_px": 10,
+ "g_max_height_px": 70,
+ "g_min_x": 600,
+ "search": {
+  "dx": 40,
+  "dy": 20,
+  "scale": 0.15,
+  "keep": 5,
+  "stray_weight": 4.0
+ },
+ "thresholds": {
+  "on": 0.5,
+  "on_min": 0.7,
+  "off_max": 0.2,
+  "dp_on": 0.4,
+  "stray_ink": 0.5,
+  "stray_max": 0.15,
+  "cost_max": 3.0,
+  "faint_ink": 0.2,
+  "faint_max": 0.15
+ },
+ "geometry": {
+  "half_width": 22.5,
+  "half_height": 51.0,
+  "stroke": 10,
+  "seg_inset": 12,
+  "points_per_seg": 5,
+  "dp_u": 0.0,
+  "dp_v": 46.5,
+  "stray_dilate": 5,
+  "seg_gain": [
+   0.98,
+   0.85,
+   0.77,
+   0.82,
+   0.75,
+   0.84,
+   0.83
+  ]
+ },
+ "starts": [
+  {
+   "name": "low-tilt",
+   "slant": 0.215,
+   "pitch": 85.0,
+   "tilt": -1.5
+  },
+  {
+   "name": "high-tilt",
+   "slant": 0.265,
+   "pitch": 79.5,
+   "tilt": -6.7
+  }
+ ],
+ "minus": {
+  "_notes": "Minus bar at the far left of the LCD, framing of 2026-11-02 bat3 (A4M/B4M/C4M). Darkness = median(background) - 20th pct(bar box): 0..10 without the sign (632 frames), 60..140 with it (222 frames, all in motor-stopped periods); threshold 45 sits in the gap. \u30de\u30a4\u30ca\u30b9\u68d2\u306e\u691c\u51fa\u7bb1\u3068\u3057\u304d\u3044\u5024\uff08bat3 \u306e\u753b\u89d2\uff09\u3002",
+  "bar": [
+   42,
+   80,
+   113,
+   123
+  ],
+  "background": [
+   [
+    42,
+    80,
+    128,
+    140
+   ],
+   [
+    100,
+    150,
+    100,
+    110
+   ]
+  ],
+  "darkness_min": 45
+ }
+}
