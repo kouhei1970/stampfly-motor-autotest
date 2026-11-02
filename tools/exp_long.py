@@ -326,10 +326,17 @@ def sleep_until(t, stop):
         stop.wait(min(dt, 0.1))
 
 
+def rest_power(ctl, note):
+    # current with the motor stopped: sensor offset or battery-side load, subtracted from the spinning readings later
+    # モータ停止中の電流（センサのゼロのずれか電池側の消費）。後で回転中の読みから引く
+    ctl.event('rest_power', ctl.power() or '', note)
+
+
 def run_cycle(a, ctl, sc, stop):
     # duty laps: the schedule is driven here, captures run in the worker / 周回の予定はここで進め、取り込みは worker
     worker = CycleWorker(a, ctl, sc, stop); worker.start()
     spin = 0.0; lap = 0
+    rest_power(ctl, 'before run')
     while lap < a.laps and spin < a.total_sec and not stop.is_set():
         lap += 1; ctl.event('lap_start', str(lap))
         t_base = time.time()
@@ -348,6 +355,9 @@ def run_cycle(a, ctl, sc, stop):
             break
         if lap < a.laps and spin < a.total_sec and a.zero_stop_sec > 0:      # zero window between laps / 周の間のゼロ窓
             ctl.send('motor stop', 'zero window'); t0 = time.time()
+            sleep_until(t0 + min(2.5, a.zero_stop_sec / 2), stop)
+            if not stop.is_set():
+                rest_power(ctl, f'zero window after lap {lap}')
             sleep_until(t0 + a.zero_stop_sec, stop)
             ctl.event('zero_window', f'start={t0:.2f} end={time.time():.2f}')
     if not stop.is_set():
@@ -513,7 +523,9 @@ def main():
         if cam.p is not None and a.postroll_sec > 0:
             ctl.event('postroll', f'{a.postroll_sec:g}s')
             try:
-                time.sleep(a.postroll_sec)
+                time.sleep(min(2.5, a.postroll_sec))
+                rest_power(ctl, 'after run')
+                time.sleep(max(0.0, a.postroll_sec - 2.5))
             except KeyboardInterrupt:
                 pass
         cam.stop(); aud.stop()
