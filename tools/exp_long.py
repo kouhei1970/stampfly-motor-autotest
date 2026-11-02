@@ -224,6 +224,29 @@ def start_media(a, ctl):
     return cam, aud
 
 
+def watch_reset(ctl, stop):
+    # stop the run if the vehicle reboots (brownout, crash): a reset stops the motor, but the next step's command
+    # would spin it again on the rebooted board. Looks for the ESP32 reset banner in the bridge's serial.log.
+    # 機体が再起動したら（電圧低下・異常）測定を打ち切る。リセットでモータは止まるが、次の段の指令で
+    # 再起動後の機体がまた回り出すため。中継の serial.log に出る ESP32 の起動表示を探す
+    logp = A.BR / 'serial.log'
+    try:
+        pos = logp.stat().st_size
+    except OSError:
+        return
+    while not stop.wait(0.5):
+        try:
+            with open(logp, 'rb') as f:
+                f.seek(pos); new = f.read(); pos += len(new)
+        except OSError:
+            continue
+        if b'rst:0x' in new or b'ESP-ROM:' in new:
+            ctl.event('stop_reason', 'vehicle reset detected in serial.log')
+            print('vehicle reset detected: stopping the run / 機体の再起動を検出: 測定を打ち切ります')
+            stop.set()
+            return
+
+
 def install_sigint(ctl, stop, motor_stop):
     # first Ctrl-C: stop flag + immediate motor stop; second: KeyboardInterrupt (abort a blocking readout)
     # 1 回目の Ctrl-C は停止フラグと即 motor stop、2 回目は KeyboardInterrupt（読み出し中でも抜ける）
@@ -542,6 +565,8 @@ def main():
         except Exception as e:
             print('motor stop failed:', e)
     install_sigint(ctl, stop, motor_stop)
+    if not a.dry_run:
+        threading.Thread(target=watch_reset, args=(ctl, stop), daemon=True).start()
     # pre-roll: let the camera start and record the scale zero before the motor turns
     # 前の撮影: カメラの起動を待ち、モータを回す前の秤のゼロを撮る
     if cam.p is not None and a.preroll_sec > 0:
