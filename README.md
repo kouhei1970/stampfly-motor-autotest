@@ -30,6 +30,9 @@ PWM 駆動中の StampFly について、次の量を PC から自動で取得�
 | J（ロータのみ） | 3.46e-9 kg·m² |
 | 1 回転あたりの脈動数 N | 10 |
 
+注意（2026-11-02 追記）: 推力は、プローブと USB のケーブルを秤のトレイと机の両方にテープで固定した状態で測った。2026-11-02 に、この留め方では秤の読みが場合によっては数 g 以上変わると分かった（トレイの上だけで固定すれば ±0.1 g）。C_T は、留め方を直して測り直すまで暫定とする。K_e・R・C_Q・J・I_0 は秤を使わないので影響を受けない。
+Caveat (added 2026-11-02): thrust was measured with the probe and USB cables taped to both the scale tray and the table. On 2026-11-02 this routing was found to shift the scale reading by several grams or more (±0.1 g when taped to the tray only). C_T is provisional until re-measured with the corrected routing. K_e, R, C_Q, J and I_0 do not use the scale.
+
 測定の素データ（オシロの .npz）は容量が大きいので置かず、要約（`data/2026-10-15/`）だけを置いている。
 
 ![解析結果の一覧](docs/img/summary.jpg)
