@@ -291,6 +291,9 @@ class CycleWorker(threading.Thread):
             if k == 10:
                 sc.w(':TFOR')
             time.sleep(0.05)
+        # read the current right after the capture, before the readout, so it belongs to this step
+        # 電流は取り込み直後（読み出しの前）に読む。読み出し中に次の段へ移っても、この段の値になる
+        line = self.ctl.power()
         t0 = time.time()
         t, v1, _ = sc.grab_raw(1); _, v2, _ = sc.grab_raw(2); sc.w(':RUN')
         readout = time.time() - t0
@@ -302,7 +305,6 @@ class CycleWorker(threading.Thread):
             f_comm = R.fine_peak(avg, E.F_PWM, r['f_comm_Hz'])
         except Exception:
             f_comm = r['f_comm_Hz']                               # fall back to the coarse FFT peak / 粗い FFT の値
-        line = self.ctl.power()
         pw = A.parse_power(line) if line else None
         self.row(job, spin_elapsed_s=f"{job['spin_t'] + t_trig - job['t_start']:.2f}", duty_meas=f'{np.mean(v1 < 1.0):.5f}',
                  VDD_V=f'{vdd:.4f}', Vm_avg_V=f'{vm:.4f}', f_comm_Hz=f'{f_comm:.2f}',
@@ -407,11 +409,14 @@ def run_steps(a, ctl, sc, stop):
             if sc.q(':TRIG:STAT?') == 'STOP':
                 break
             time.sleep(0.1)
+        row['power_after'] = ctl.power() or ''                   # still at the post duty / まだ段差後の Duty
+        if not a.run_during_readout and post != 0:
+            set_duty(0, f'pair{k} readout stop')                 # stop during the long readout / 長い読み出しの間は止める
+        t1 = time.time()
         t, v1, _ = sc.grab_raw(1); _, v2, _ = sc.grab_raw(2); sc.w(':RUN')
-        row['readout_s'] = f'{time.time() - t0:.2f}'
+        row['readout_s'] = f'{time.time() - t1:.2f}'
         name = f'{a.tag}_{pre}to{post}.npz'
         np.savez(E.OUT / name, t=t, v1=v1, v2=v2, mode='step', pre=pre, post=post); row['npz'] = name
-        row['power_after'] = ctl.power() or ''                   # motor still at the post duty / モータは段差後の Duty のまま
         w.writerow(row); fcsv.flush()
         ctl.event('step_done', f'pair{k} {pre}to{post}', f"readout={row['readout_s']}s")
     sc.w(':TRIG:SWE AUTO'); sc.w(':RUN')
@@ -430,18 +435,29 @@ def main():
     c.add_argument('--step-sec', type=float, default=5.0); c.add_argument('--laps', type=int, default=1)
     c.add_argument('--total-sec', type=float, default=240.0); c.add_argument('--zero-stop-sec', type=float, default=4.0)
     c.add_argument('--wait-sec', type=float, default=1.5); c.add_argument('--vmin', type=float, default=3.5)
-    c.add_argument('--mdep', type=int, default=600000, help='scope memory depth for the PWM capture / PWM 取り込みのメモリ長')
+    # 60k: capture + readout about 3.1 s on the DS1054Z (600k took 7.4 s, too long for a 5-s step; measured 2026-11-02)
+    # 60k: 取り込みと読み出しで約 3.1 秒（600k は 7.4 秒で 5 秒の段に収まらない。2026-11-02 実測）
+    c.add_argument('--mdep', type=int, default=60000, help='scope memory depth for the PWM capture / PWM 取り込みのメモリ長')
     c.add_argument('--section', default='A', choices=['A', 'B', 'C'])
     add_args(c)
     s = sub.add_parser('step'); s.add_argument('tag')
     s.add_argument('--steps', default='0:60,60:68,68:60,50:80,80:50,60:0')
     s.add_argument('--pre-sec', type=float, default=2.5); s.add_argument('--tb', type=float, default=0.1)
-    s.add_argument('--mdep', type=int, default=12000000)
+    # 6M at 0.1 s/div = 5 MS/s, as the 10-15 spin-downs; the readout takes about 48 s
+    # 6M・0.1 s/div で 5 MS/s（10-15 のスピンダウンと同じ）。読み出しは約 48 秒
+    s.add_argument('--mdep', type=int, default=6000000)
+    s.add_argument('--run-during-readout', action='store_true',
+                   help='keep the post duty during the ~48 s readout (default: stop the motor to limit heating and battery drain) / '
+                        '読み出し中も段差後の Duty で回す（既定は止めて、発熱と電池の消耗を抑える）')
     s.add_argument('--keepalive-sec', type=float, default=10.0,
                    help='motor test expiry; re-sent every half of it / motor test の期限（半分ごとに再送）')
     add_args(s)
     a = ap.parse_args()
     E.apply_common_args(a, need_scope=not a.dry_run)
+    # the current scale differs between firmware versions (10 before the 0.01-ohm shunt fix, 1 after): require it explicitly
+    # 電流の倍率は機体ソフトの版で違う（0.01 Ω の修正前は 10、後は 1）ので、明示を必須にする
+    if not a.dry_run and 'SF_CURRENT_SCALE' not in os.environ:
+        raise SystemExit('set SF_CURRENT_SCALE explicitly (1 for firmware with the 0.01 ohm shunt fix) / SF_CURRENT_SCALE を明示してください')
     E.check_tag(a.tag)
     if not 1 <= a.motor <= 4:
         raise SystemExit('motor must be 1-4')
