@@ -30,8 +30,8 @@ PWM 駆動中の StampFly について、次の量を PC から自動で取得�
 | J（ロータのみ） | 3.46e-9 kg·m² |
 | 1 回転あたりの脈動数 N | 10 |
 
-注意（2026-11-02 追記）: 推力は、プローブと USB のケーブルを秤のトレイと机の両方にテープで固定した状態で測った。2026-11-02 に、この留め方では秤の読みが場合によっては数 g 以上変わると分かった（トレイの上だけで固定すれば ±0.1 g）。C_T は、留め方を直して測り直すまで暫定とする。K_e・R・C_Q・J・I_0 は秤を使わないので影響を受けない。
-Caveat (added 2026-11-02): thrust was measured with the probe and USB cables taped to both the scale tray and the table. On 2026-11-02 this routing was found to shift the scale reading by several grams or more (±0.1 g when taped to the tray only). C_T is provisional until re-measured with the corrected routing. K_e, R, C_Q, J and I_0 do not use the scale.
+注意（2026-11-02 追記）: 2026-11-02 夜に同じプロペラで測り直すと、$C_T$ は原点を通る当てはめで 7.27e-9 だった（各 Duty で 10/15 より 2〜5 % 小さい。原因は未特定）。$C_Q$ は 3.33e-11 で一致した。ケーブルを机にも固定する留め方は、ゼロをずらすだけで推力の読みは変えないことを、同じ夜に確かめた。同じ日に一度書いた「留め方で $C_T$ がずれた可能性」は誤りで、その日の推力のずれの原因は、秤のマイナス表示を読み落としたことだった。記録は docs/procedure_long_discharge.md 10 章。
+Caveat (added 2026-11-02): a redo with the same propeller on the evening of 2026-11-02 gave $C_T$ = 7.27e-9 through the origin (2-5 % lower than 2026-10-15 at every duty; cause not yet found) and $C_Q$ = 3.33e-11 (agrees). Taping the cables to the table only shifts the scale zero and does not change the thrust readings (checked the same evening). An earlier note of the same day blaming the cable routing was wrong: that day's thrust offsets came from reading negative scale values without their minus sign. See docs/procedure_long_discharge.md section 10.
 
 測定の素データ（オシロの .npz）は容量が大きいので置かず、要約（`data/2026-10-15/`）だけを置いている。
 
