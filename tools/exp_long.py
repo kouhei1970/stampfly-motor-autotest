@@ -307,19 +307,21 @@ class CycleWorker(threading.Thread):
         sc = self.sc
         if a.dry_run:
             sc.duty = job['duty'] / 100
-        sc.w(':SING'); t_trig = time.time()
-        for k in range(100):                                      # wait for STOP, force a trigger after ~0.5 s
-            if sc.q(':TRIG:STAT?') == 'STOP':
-                break
-            if k == 10:
-                sc.w(':TFOR')
-            time.sleep(0.05)
-        # read the current right after the capture, before the readout, so it belongs to this step
-        # 電流は取り込み直後（読み出しの前）に読む。読み出し中に次の段へ移っても、この段の値になる
-        line = self.ctl.power()
-        t0 = time.time()
-        t, v1, _ = sc.grab_raw(1); _, v2, _ = sc.grab_raw(2); sc.w(':RUN')
-        readout = time.time() - t0
+        with SCOPE_LOCK:
+            sc.w(':SING'); t_trig = time.time()
+            for k in range(100):                                  # wait for STOP, force a trigger after ~0.5 s
+                if sc.q(':TRIG:STAT?') == 'STOP':
+                    break
+                if k == 10:
+                    sc.w(':TFOR')
+                time.sleep(0.05)
+            # read the current right after the capture, before the readout, so it belongs to this step;
+            # --power-reads N averages N readings (the current sensor steps by about 4 mA)
+            # 電流は取り込み直後（読み出しの前）に読む。--power-reads N で N 回読んで平均（約 4 mA 刻みのため）
+            lines = [self.ctl.power() for _ in range(max(1, a.power_reads))]
+            t0 = time.time()
+            t, v1, _ = sc.grab_raw(1); _, v2, _ = sc.grab_raw(2); sc.w(':RUN')
+            readout = time.time() - t0
         name = f"{a.tag}_L{job['lap']}_S{job['step']:02d}.npz"
         np.savez(E.OUT / name, t=t, v1=v1, v2=v2, mode='pwm')
         r, _ = E.analyse({'t': t, 'v1': v1, 'v2': v2}, 'pwm')
@@ -328,7 +330,9 @@ class CycleWorker(threading.Thread):
             f_comm = R.fine_peak(avg, E.F_PWM, r['f_comm_Hz'])
         except Exception:
             f_comm = r['f_comm_Hz']                               # fall back to the coarse FFT peak / 粗い FFT の値
-        pw = A.parse_power(line) if line else None
+        pws = [A.parse_power(x) for x in lines if x]; pws = [x for x in pws if x]
+        pw = (float(np.mean([x[0] for x in pws])), float(np.mean([x[1] for x in pws]))) if pws else None
+        line = ' | '.join(x for x in lines if x)
         self.row(job, spin_elapsed_s=f"{job['spin_t'] + t_trig - job['t_start']:.2f}", duty_meas=f'{np.mean(v1 < 1.0):.5f}',
                  VDD_V=f'{vdd:.4f}', Vm_avg_V=f'{vm:.4f}', f_comm_Hz=f'{f_comm:.2f}',
                  omega_rad_s=f'{2 * np.pi * f_comm / R.N:.2f}', Ibat_A=f'{pw[1]:.4f}' if pw else '',
@@ -349,17 +353,51 @@ def sleep_until(t, stop):
         stop.wait(min(dt, 0.1))
 
 
+SCOPE_LOCK = threading.Lock()   # one capture at a time: worker steps and rest captures / 取り込みは同時に 1 つだけ
+
+
+def rest_scope(sc, ctl, note):
+    # capture with the motor stopped: no current, so the drain equals V_DD and CH1 - CH2 is the channel offset
+    # at the run settings; logged so every step can be corrected for a drifting offset
+    # モータ停止中の取り込み: 電流 0 なのでドレイン = V_DD、CH1 - CH2 はその設定でのチャネルのずれ。
+    # ずれが途中で動いても各段を補正できるよう記録する
+    try:
+        with SCOPE_LOCK:
+            sc.w(':SING')
+            for k in range(60):
+                if sc.q(':TRIG:STAT?') == 'STOP':
+                    break
+                if k == 5:
+                    sc.w(':TFOR')              # no edges at rest / 停止中は辺がないので強制
+                time.sleep(0.05)
+            _, v1, _ = sc.grab_raw(1); _, v2, _ = sc.grab_raw(2); sc.w(':RUN')
+        ctl.event('rest_scope', f'CH1={v1.mean():.4f} CH2={v2.mean():.4f} CH1-CH2={v1.mean() - v2.mean():+.4f}', note)
+    except Exception as e:
+        ctl.event('rest_scope_error', repr(e), note)
+
+
 def rest_power(ctl, note):
     # current with the motor stopped: sensor offset or battery-side load, subtracted from the spinning readings later
     # モータ停止中の電流（センサのゼロのずれか電池側の消費）。後で回転中の読みから引く
     ctl.event('rest_power', ctl.power() or '', note)
 
 
+def zero_window(a, ctl, sc, stop, note):
+    # stop the motor, read the at-rest current and capture the at-rest scope values, then wait out the window
+    # モータを止め、静止時の電流とオシロの値を取ってから、窓の終わりまで待つ
+    ctl.send('motor stop', f'zero window {note}'); t0 = time.time()
+    sleep_until(t0 + min(2.5, a.zero_stop_sec / 2), stop)
+    if not stop.is_set():
+        rest_power(ctl, f'zero window {note}'); rest_scope(sc, ctl, f'zero window {note}')
+    sleep_until(t0 + a.zero_stop_sec, stop)
+    ctl.event('zero_window', f'start={t0:.2f} end={time.time():.2f}', note)
+
+
 def run_cycle(a, ctl, sc, stop):
     # duty laps: the schedule is driven here, captures run in the worker / 周回の予定はここで進め、取り込みは worker
     worker = CycleWorker(a, ctl, sc, stop); worker.start()
     spin = 0.0; lap = 0
-    rest_power(ctl, 'before run')
+    rest_power(ctl, 'before run'); rest_scope(sc, ctl, 'before run')
     while lap < a.laps and spin < a.total_sec and not stop.is_set():
         lap += 1; ctl.event('lap_start', str(lap))
         t_base = time.time()
@@ -377,15 +415,13 @@ def run_cycle(a, ctl, sc, stop):
             sleep_until(t_base, stop)
             if not stop.is_set():
                 spin += a.step_sec
+            if a.stop_between_steps and not stop.is_set():       # zero and rest values after every step (measurement E)
+                zero_window(a, ctl, sc, stop, f'after lap {lap} step {i}')   # 段ごとにゼロと静止時の値（測定 E）
+                t_base = time.time()
         if stop.is_set():
             break
-        if lap < a.laps and spin < a.total_sec and a.zero_stop_sec > 0:      # zero window between laps / 周の間のゼロ窓
-            ctl.send('motor stop', 'zero window'); t0 = time.time()
-            sleep_until(t0 + min(2.5, a.zero_stop_sec / 2), stop)
-            if not stop.is_set():
-                rest_power(ctl, f'zero window after lap {lap}')
-            sleep_until(t0 + a.zero_stop_sec, stop)
-            ctl.event('zero_window', f'start={t0:.2f} end={time.time():.2f}')
+        if lap < a.laps and spin < a.total_sec and a.zero_stop_sec > 0 and not a.stop_between_steps:
+            zero_window(a, ctl, sc, stop, f'after lap {lap}')            # zero window between laps / 周の間のゼロ窓
     if not stop.is_set():
         ctl.event('stop_reason', 'laps done' if lap >= a.laps else 'total-sec reached')
     worker.q.put(None); worker.join(timeout=60)
@@ -527,6 +563,9 @@ def main():
     # 60k: 取り込みと読み出しで約 3.1 秒（600k は 7.4 秒で 5 秒の段に収まらない。2026-11-02 実測）
     c.add_argument('--mdep', type=int, default=60000, help='scope memory depth for the PWM capture / PWM 取り込みのメモリ長')
     c.add_argument('--section', default='A', choices=['A', 'B', 'C'])
+    c.add_argument('--stop-between-steps', action='store_true',
+                   help='zero window after every step instead of between laps (measurement E) / 周ではなく段ごとにゼロ窓')
+    c.add_argument('--power-reads', type=int, default=1, help='current readings per step, averaged / 1 段の電流の読み回数（平均）')
     c.add_argument('--all-motors', action='store_true',
                    help='spin all four motors (motor all); current is then the total of four / 4 モータ同時。電流は 4 個の合計')
     add_args(c)
@@ -609,6 +648,8 @@ def main():
             try:
                 time.sleep(min(2.5, a.postroll_sec))
                 rest_power(ctl, 'after run')
+                if a.cmd == 'cycle':
+                    rest_scope(sc, ctl, 'after run')
                 time.sleep(max(0.0, a.postroll_sec - 2.5))
             except KeyboardInterrupt:
                 pass
