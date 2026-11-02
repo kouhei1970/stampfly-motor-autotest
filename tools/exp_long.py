@@ -198,6 +198,10 @@ def add_args(ap):
     ap.add_argument('--motor', type=int, default=1)
     ap.add_argument('--fps', type=float, default=3.0, help='camera frames per second / カメラの毎秒枚数')
     ap.add_argument('--audio', action='store_true', help='record the microphone (needs SF_MIC_NAME) / 録音')
+    ap.add_argument('--preroll-sec', type=float, default=8.0,
+                    help='camera runs this long before the first command (start-up ~4.5 s + scale zero) / 最初の指令の前に撮る時間（起動約 4.5 秒＋秤のゼロ）')
+    ap.add_argument('--postroll-sec', type=float, default=6.0,
+                    help='camera keeps running this long after the final stop (scale settles ~2.5 s, then zero) / 最後の停止の後に撮る時間（秤が落ち着く約 2.5 秒＋ゼロ）')
     ap.add_argument('--dry-run', action='store_true', help='no scope, no serial: fake data, log commands only')
     ap.add_argument('--dry-run-camera', action='store_true', help='with --dry-run: really run the camera')
     E.add_common_args(ap)
@@ -463,6 +467,11 @@ def main():
         except Exception as e:
             print('motor stop failed:', e)
     install_sigint(ctl, stop, motor_stop)
+    # pre-roll: let the camera start and record the scale zero before the motor turns
+    # 前の撮影: カメラの起動を待ち、モータを回す前の秤のゼロを撮る
+    if cam.p is not None and a.preroll_sec > 0:
+        ctl.event('preroll', f'{a.preroll_sec:g}s')
+        sleep_until(time.time() + a.preroll_sec, stop)
     try:
         if a.cmd == 'cycle':
             if not a.dry_run:
@@ -483,6 +492,14 @@ def main():
     finally:
         stop.set()
         motor_stop('final (finally)')                                # always stop the motor first / 最優先でモータを止める
+        # post-roll: keep the camera on until the scale has settled and shows the zero after the run
+        # 後の撮影: 秤が落ち着いて運転後のゼロを示すまでカメラを止めない
+        if cam.p is not None and a.postroll_sec > 0:
+            ctl.event('postroll', f'{a.postroll_sec:g}s')
+            try:
+                time.sleep(a.postroll_sec)
+            except KeyboardInterrupt:
+                pass
         cam.stop(); aud.stop()
         info['end'] = time.strftime('%Y-%m-%d %H:%M:%S'); info['frames'] = cam.n
         run_json.write_text(json.dumps(info, indent=1, ensure_ascii=False, default=str))
