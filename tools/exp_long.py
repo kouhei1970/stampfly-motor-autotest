@@ -362,7 +362,7 @@ def ke_probe(a, ctl, sc, job, stop):
     name = f"{a.tag}_L{job['lap']}_S{job['step']:02d}_ke.npz"
     with SCOPE_LOCK:
         for c in (':TRIG:MODE PULS', ':TRIG:PULS:SOUR CHAN1', ':TRIG:PULS:WHEN PGR', ':TRIG:PULS:WIDT 2e-5',
-                  ':TRIG:PULS:LEV 0.45', ':TRIG:SWE NORM', ':TIM:MAIN:SCAL 0.01', ':TIM:MAIN:OFFS -0.05'):
+                  f':TRIG:PULS:LEV {a.probe_level}', ':TRIG:SWE NORM', ':TIM:MAIN:SCAL 0.01', ':TIM:MAIN:OFFS -0.05'):
             sc.w(c)
         time.sleep(0.4)
         sc.w(':SING'); time.sleep(0.8)                     # the scope accepts a trigger ~0.45 s after SING / 受け付けまで約 0.45 s
@@ -610,6 +610,9 @@ def main():
     c.add_argument('--ke-probe', action='store_true',
                    help='stop the PWM ~0.1 s in every step and capture the coast for K_e / 各段で PWM を約 0.1 s 止めて K_e 用に取り込む')
     c.add_argument('--probe-gap', type=float, default=0.08, help='seconds between stop and restart / 停止から再開まで [s]')
+    c.add_argument('--probe-level', type=float, default=0.45,
+                   help='drain level of the probe trigger; 0.25 also works without a propeller at high duty (drain ~0.4 V while off) / '
+                        'K_e 用トリガのドレインの電圧。0.25 ならプロペラなしの高い Duty（OFF 中 約 0.4 V）でも使える')
     c.add_argument('--stop-between-steps', action='store_true',
                    help='zero window after every step instead of between laps (measurement E) / 周ではなく段ごとにゼロ窓')
     c.add_argument('--power-reads', type=int, default=1, help='current readings per step, averaged / 1 段の電流の読み回数（平均）')
