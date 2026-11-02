@@ -443,30 +443,28 @@ def run_steps(a, ctl, sc, stop):
         row['power_before'] = ctl.power() or ''
         if a.dry_run:
             sc.step = (pre / 100, post / 100)
-        # arming over LAN takes 0.1-0.2 s or more: set a trigger that only the step can satisfy, wait until the
-        # scope is armed (WAIT), then send the step; force a trigger only as a fallback after 3 s
-        # LAN 越しの待ち受け開始は 0.1〜0.2 秒以上かかる: 段差でしか成り立たないトリガを設定し、待ち受け（WAIT）を
-        # 確かめてから段差を送る。3 秒たっても待ち受けにならなければ強制トリガ
+        # the scope accepts a trigger only about 0.45 s after SING over LAN (measured 2026-11-02); its status
+        # query does not tell when, so wait a fixed 0.8 s. The step-qualified triggers (from rest, pulse width)
+        # wait for the step anyway; the spin-down edge trigger fires on the running PWM before the stop.
+        # LAN 越しでは SING の約 0.45 秒後からトリガを受け付ける（2026-11-02 実測）。状態の問い合わせでは分からない
+        # ので一定の 0.8 秒待つ。段差でしか成り立たないトリガ（回し始め・パルス幅）はどのみち段差を待ち、
+        # スピンダウンのエッジトリガは停止前の PWM でかかる
         trig = arm_step_trigger(sc, pre, post)
         ctl.event('trigger_setup', trig, f'pair{k}')
-        sc.w(':SING'); t_sing = time.time(); scope_st = ''
-        if pre > 0 and post == 0:                  # spin-down: the running PWM triggers at once / 回転中の PWM ですぐトリガ
-            time.sleep(0.4); scope_st = 'spin-down 0.4 s'
-        else:
-            while time.time() - t_sing < 3.0:      # armed and waiting: the step will trigger it / 待ち受け中なら段差でトリガする
-                scope_st = sc.q(':TRIG:STAT?')
-                if scope_st in ('WAIT', 'TD', 'STOP'):
-                    break
-                time.sleep(0.02)
-            else:
-                sc.w(':TFOR'); scope_st = 'forced'
+        sc.w(':SING'); t_sing = time.time()
+        time.sleep(0.8)
+        scope_st = sc.q(':TRIG:STAT?')
         row['trigger_time'] = f'{time.time():.2f}'
         ctl.event('scope_state', scope_st, f'pair{k} {time.time() - t_sing:.2f}s after SING')
         row['post_send_time'] = f'{set_duty(post, f"pair{k} post"):.2f}'
         t0 = time.time()
+        forced = False
         for _ in range(int((a.tb * 12 + 20) / 0.1)):             # wait for STOP / STOP を待つ
             if sc.q(':TRIG:STAT?') == 'STOP':
                 break
+            if not forced and time.time() - t0 > a.tb * 12 + 3:  # no trigger came: force one, never keep an empty record
+                sc.w(':TFOR'); forced = True                       # トリガが来なければ強制。空の記録を残さない
+                ctl.event('scope_state', 'forced', f'pair{k}')
             time.sleep(0.1)
         row['power_after'] = ctl.power() or ''                   # still at the post duty / まだ段差後の Duty
         if not a.run_during_readout and post != 0:
