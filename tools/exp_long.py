@@ -487,7 +487,7 @@ def run_steps(a, ctl, sc, stop):
         return t
 
     # scope setup as exp_coast: falling edge on CH1, single, trigger near the left edge / exp_coast と同じ設定
-    sc.w(':RUN')
+    sc.w(':RUN'); E.channels_on(sc)
     sc.w(':CHAN1:SCAL 1.25'); sc.w(':CHAN1:OFFS -3.25'); sc.w(':CHAN2:SCAL 0.5'); sc.w(':CHAN2:OFFS -3.5')
     sc.w(':TRIG:SWE NORM')
     # trigger 1.5 div from the left edge: the record spans -1.5 div .. +10.5 div around it

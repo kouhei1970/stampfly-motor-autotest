@@ -100,8 +100,18 @@ class Scope:
         return np.arange(len(y)) * xinc + xor, (y - yor - yref) * yinc, y
 
 
+def channels_on(sc):
+    # CH1 and CH2 on, CH3 and CH4 off: the scripts read CH1/CH2, and two channels allow the 60k/600k/6M depths
+    # (after a self-calibration on 2026-11-02 CH2 was left off, so CH2 would have been recorded as garbage)
+    # CH1・CH2 を ON、CH3・CH4 を OFF。スクリプトは CH1/CH2 を読み、2 チャネルなら 60k/600k/6M が使える
+    # （2026-11-02 の自己較正の後、CH2 が OFF のままで、そのままでは CH2 が無意味な値で記録されていた）
+    for c, on in ((1, 'ON'), (2, 'ON'), (3, 'OFF'), (4, 'OFF')):
+        sc.w(f':CHAN{c}:DISP {on}')
+    time.sleep(0.3)
+
+
 def setup(sc, mode):
-    sc.w(':RUN'); sc.w(':ACQ:TYPE NORM'); sc.w(':TRIG:SWE AUTO')
+    sc.w(':RUN'); channels_on(sc); sc.w(':ACQ:TYPE NORM'); sc.w(':TRIG:SWE AUTO')
     if mode == 'dc':
         # CH1 shunt (up to ~0.3 V), CH2 motor + (up to ~4.3 V) / CH1 シャント、CH2 モータ + 端子
         sc.w(':CHAN1:SCAL 0.05'); sc.w(':CHAN1:OFFS -0.15'); sc.w(':CHAN2:SCAL 0.5'); sc.w(':CHAN2:OFFS -2.5')

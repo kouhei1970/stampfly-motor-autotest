@@ -26,7 +26,7 @@ def main():
     E.check_tag(a.tag)
     if not (1 <= a.motor <= 4 and 0 <= a.duty <= 100):
         raise SystemExit('motor must be 1-4 and duty 0-100')   # firmware CLI range / ファームの範囲
-    sc = E.Scope(); sc.w(':RUN')
+    sc = E.Scope(); sc.w(':RUN'); E.channels_on(sc)
     sc.w(':CHAN1:SCAL 1.25'); sc.w(':CHAN1:OFFS -3.25'); sc.w(':CHAN2:SCAL 0.5'); sc.w(':CHAN2:OFFS -3.5')
     sc.w(':TRIG:MODE EDGE'); sc.w(':TRIG:EDG:SOUR CHAN1'); sc.w(':TRIG:EDG:SLOP NEG'); sc.w(':TRIG:EDG:LEV 2.0')
     sc.w(':TRIG:SWE NORM')
