@@ -368,7 +368,10 @@ def run_cycle(a, ctl, sc, stop):
                 break
             t_start = max(time.time(), t_base)
             sleep_until(t_start, stop)
-            t_send = ctl.send(f'motor test {a.motor} {duty} {a.step_sec + 2:g}', f'lap{lap} step{i}')
+            # all four motors with --all-motors (the scope still sees only the probed motor)
+            # --all-motors なら 4 モータ同時（オシロはプローブを当てたモータだけを見る）
+            target = 'all' if a.all_motors else f'test {a.motor}'
+            t_send = ctl.send(f'motor {target} {duty} {a.step_sec + 2:g}', f'lap{lap} step{i}')
             worker.q.put(dict(lap=lap, step=i, duty=duty, t_start=t_send, send_time=t_send, spin_t=spin))
             t_base = t_start + a.step_sec
             sleep_until(t_base, stop)
@@ -524,6 +527,8 @@ def main():
     # 60k: 取り込みと読み出しで約 3.1 秒（600k は 7.4 秒で 5 秒の段に収まらない。2026-11-02 実測）
     c.add_argument('--mdep', type=int, default=60000, help='scope memory depth for the PWM capture / PWM 取り込みのメモリ長')
     c.add_argument('--section', default='A', choices=['A', 'B', 'C'])
+    c.add_argument('--all-motors', action='store_true',
+                   help='spin all four motors (motor all); current is then the total of four / 4 モータ同時。電流は 4 個の合計')
     add_args(c)
     s = sub.add_parser('step'); s.add_argument('tag')
     s.add_argument('--steps', default='0:60,60:68,68:60,50:80,80:50,60:0')
