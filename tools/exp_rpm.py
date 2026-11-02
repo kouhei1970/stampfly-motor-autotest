@@ -110,6 +110,22 @@ def channels_on(sc):
     time.sleep(0.3)
 
 
+# Vertical settings of the PWM captures. Default: CH1 1.25 V/div -3.25 V, CH2 0.5 V/div -3.5 V (2026-10-15 and the
+# morning of 2026-11-02). SCOPE_MATCHED=1: both channels 1 V/div -2.25 V, so the two front ends share one gain path
+# and V_DD - v_D does not carry a channel-to-channel gain difference (calibration of 2026-11-02 afternoon).
+# PWM 取り込みの縦軸設定。既定は CH1 1.25 V/div・-3.25 V、CH2 0.5 V/div・-3.5 V（10-15 と 11-02 午前）。
+# SCOPE_MATCHED=1 で両チャネル 1 V/div・-2.25 V。同じ増幅経路になり、V_DD - v_D にチャネル間の倍率差が入らない
+MATCHED = os.environ.get('SCOPE_MATCHED', '0') == '1'
+
+
+def vertical_pwm(sc):
+    # CH1 drain (0..4.4 V) and CH2 V_DD (3.5..4.4 V) / CH1 ドレイン、CH2 V_DD
+    if MATCHED:
+        sc.w(':CHAN1:SCAL 1'); sc.w(':CHAN1:OFFS -2.25'); sc.w(':CHAN2:SCAL 1'); sc.w(':CHAN2:OFFS -2.25')
+    else:
+        sc.w(':CHAN1:SCAL 1.25'); sc.w(':CHAN1:OFFS -3.25'); sc.w(':CHAN2:SCAL 0.5'); sc.w(':CHAN2:OFFS -3.5')
+
+
 def setup(sc, mode):
     sc.w(':RUN'); channels_on(sc); sc.w(':ACQ:TYPE NORM'); sc.w(':TRIG:SWE AUTO')
     if mode == 'dc':
@@ -118,7 +134,7 @@ def setup(sc, mode):
         sc.w(':TIM:MAIN:SCAL 2e-3'); sc.w(':TIM:MAIN:OFFS 0'); time.sleep(0.3); sc.w(':ACQ:MDEP 600000')
     else:
         # CH1 drain, CH2 V_DD / CH1 ドレイン、CH2 V_DD
-        sc.w(':CHAN1:SCAL 1.25'); sc.w(':CHAN1:OFFS -3.25'); sc.w(':CHAN2:SCAL 0.5'); sc.w(':CHAN2:OFFS -3.5')
+        vertical_pwm(sc)
         sc.w(':TIM:MAIN:SCAL 2e-3'); sc.w(':TIM:MAIN:OFFS 0'); time.sleep(0.3); sc.w(':ACQ:MDEP 6000000')
     time.sleep(1.5)
 

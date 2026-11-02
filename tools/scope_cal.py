@@ -46,7 +46,7 @@ def main():
         if new:
             w.writerow(['wall_time_s', 'label', 'ch1_setting', 'CH1_V', 'CH2_V', 'CH1_minus_CH2_mV', 'CLI_V', 'CLI_minus_CH2_mV', 'CLI_I_A'])
         rows = []
-        for setting, cmds in (('run (1.25 V/div, -3.25 V)', []), ('as CH2 (0.5 V/div, -3.5 V)', [':CHAN1:SCAL 0.5', ':CHAN1:OFFS -3.5']),
+        for setting, cmds in (('run (matched)' if E.MATCHED else 'run (1.25 V/div, -3.25 V)', []), ('as CH2 (0.5 V/div, -3.5 V)', [':CHAN1:SCAL 0.5', ':CHAN1:OFFS -3.5']),
                               ('1.25 V/div, offset 0', [':CHAN1:SCAL 1.25', ':CHAN1:OFFS 0'])):
             for c in cmds:
                 sc.w(c)
@@ -58,7 +58,7 @@ def main():
                        f'{cv:.3f}', f'{1000 * (cv - c2):+.1f}', f'{ci:.4f}']
                 w.writerow(row); f.flush(); rows.append(row)
                 print(' '.join(row[1:]))
-        sc.w(':CHAN1:SCAL 1.25'); sc.w(':CHAN1:OFFS -3.25')       # back to the run settings / 本番の設定に戻す
+        E.vertical_pwm(sc)                                      # back to the run settings / 本番の設定に戻す
     print('appended to', out)
 
 
