@@ -24,14 +24,45 @@ if not fifo.exists():
     os.mkfifo(fifo, 0o600)
 os.chmod(fifo, 0o600)
 s = serial.Serial(port, 115200, timeout=0.2)
+lock = threading.Lock()   # guards s while it is reopened / 開き直しの間 s を守る
 logp = d / 'serial.log'
 fd = os.open(logp, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
 log = os.fdopen(fd, 'ab', buffering=0)
 
 
+def reopen(why):
+    # the USB port vanished (board reset, cable, power): wait for it and open it again
+    # USB ポートが消えた（基板のリセット・ケーブル・電源）: 戻るのを待って開き直す
+    global s
+    log.write(f'\n[{time.strftime("%H:%M:%S")} PORT LOST] {why}\n'.encode())
+    try:
+        s.close()
+    except Exception:
+        pass
+    while True:
+        time.sleep(0.5)
+        found = sorted(glob.glob('/dev/cu.usbmodem*'))
+        name = port if port in found else (found[0] if len(found) == 1 else None)
+        if name is None:
+            continue
+        try:
+            s = serial.Serial(name, 115200, timeout=0.2)
+        except (serial.SerialException, OSError):
+            continue
+        log.write(f'\n[{time.strftime("%H:%M:%S")} PORT REOPENED] {name}\n'.encode())
+        return
+
+
 def reader():
     while True:
-        b = s.read(4096)
+        cur = s
+        try:
+            b = cur.read(4096)
+        except (serial.SerialException, OSError) as e:
+            with lock:
+                if s is cur:           # not reopened by the writer meanwhile / 書き側がまだ開き直していなければ
+                    reopen(f'read: {e}')
+            continue
         if b:
             log.write(b)
 
@@ -44,4 +75,13 @@ while True:
             if not line:
                 continue
             log.write(f'\n[{time.strftime("%H:%M:%S")} SEND] {line}\n'.encode())
-            s.write((line + '\r\n').encode())
+            for attempt in range(2):   # retry once after reopening / 開き直して 1 回だけ再送
+                cur = s
+                try:
+                    with lock:
+                        cur.write((line + '\r\n').encode())
+                    break
+                except (serial.SerialException, OSError) as e:
+                    with lock:
+                        if s is cur:   # not reopened by the reader meanwhile / 読み側がまだ開き直していなければ
+                            reopen(f'write: {e}')
