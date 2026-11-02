@@ -35,6 +35,22 @@ def cli():
     return (float(np.mean([v[0] for v in vals])), float(np.mean([v[1] for v in vals]))) if vals else (np.nan, np.nan)
 
 
+CONTACT_CH1_MV = 5.0     # |change of CH1-CH2| above this = probe contact changed (normal moves reach 5.6 mV, 2026-11-02) / これを超える CH1-CH2 の変化は接触の変化（通常の動きで最大 5.6 mV）[mV]
+CONTACT_CLI_MV = 10.0    # same for CLI-CH2; the INA3221 bus-voltage step is 8 mV / CLI-CH2 について同様（INA3221 の電圧の刻みは 8 mV）[mV]
+
+
+def compare_dither(csv_path, new_row):
+    # compare the new 'matched dither' row with the previous one in the same csv (before/after handling the motor)
+    # 新しい 'matched dither' の行を同じ csv の前回の行と比べる（モータを扱う前後の接触の変化）
+    prev = [r for r in csv.reader(open(csv_path)) if len(r) > 5 and r[2].startswith('matched dither') and r != new_row]
+    if not prev:
+        return
+    p = prev[-1]; dt = (float(new_row[0]) - float(p[0])) / 60
+    d1 = float(new_row[5]) - float(p[5]); dc = float(new_row[7]) - float(p[7])
+    print(f'vs previous dither "{p[1]}" {dt:.1f} min ago: CH1-CH2 {d1:+.1f} mV, CLI-CH2 {dc:+.1f} mV')
+    print('CONTACT CHANGED' if abs(d1) > CONTACT_CH1_MV or abs(dc) > CONTACT_CLI_MV else 'contact unchanged')
+
+
 def main():
     ap = argparse.ArgumentParser(); ap.add_argument('label'); ap.add_argument('--n', type=int, default=3)
     ap.add_argument('--mdep', type=int, default=60000)
@@ -66,6 +82,7 @@ def main():
             row = [f'{time.time():.2f}', a.label, f'matched dither {a.dither}', f'{c1:.4f}', f'{c2:.4f}', f'{1000 * (c1 - c2):+.1f}',
                    f'{cv:.3f}', f'{1000 * (cv - c2):+.1f}', f'{ci:.4f}']
             w.writerow(row); f.flush(); rows.append(row); print(' '.join(row[1:]))
+            compare_dither(out, row)
             print('  per offset CH1-CH2 [mV]:', ' '.join(f'{1000 * (x - y):+.1f}' for x, y in zip(m1, m2)))
         for setting, cmds in (('run (matched)' if E.MATCHED else 'run (1.25 V/div, -3.25 V)', []), ('as CH2 (0.5 V/div, -3.5 V)', [':CHAN1:SCAL 0.5', ':CHAN1:OFFS -3.5']),
                               ('1.25 V/div, offset 0', [':CHAN1:SCAL 1.25', ':CHAN1:OFFS 0'])):

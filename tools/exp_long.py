@@ -592,6 +592,102 @@ def run_steps(a, ctl, sc, stop):
 
 
 # ---------------------------------------------------------------- main
+# ---------------------------------------------------------------- scale check (motor stopped)
+ZERO_DRIFT_G = 0.2   # warn when the empty reading moves more (slack cables still give about 0.14 g) / 空の読みのずれの警告 [g]（ケーブルを垂らしても約 0.14 g 動く）
+
+
+def scale_times(folder):
+    # image file name -> arrival time from frames.csv (folder or its parent), else file modification time
+    # 画像名 -> 到着時刻。frames.csv（フォルダかその親）があればそれ、なければファイルの更新時刻
+    times = {}
+    for d in (folder, folder.parent):
+        if (d / 'frames.csv').exists():
+            with open(d / 'frames.csv') as f:
+                times = {pathlib.Path(r['file']).name: float(r['wall_time_s']) for r in csv.DictReader(f)}
+            break
+    return times
+
+
+def scale_read_dir(folder, cal):
+    # read every image with read_scale; returns [(time_s, value_g)] of the ok frames and the frame count
+    # read_scale で全画像を読み、ok の（時刻, 値）と総フレーム数を返す
+    import read_scale as RS
+    times = scale_times(folder); good, total = [], 0
+    for p in sorted(folder.glob('*.jpg')):
+        t = times.get(p.name, p.stat().st_mtime)
+        for _, gray in RS.frames_of(p, cal):
+            value, ok, _, _ = RS.read_frame(gray, cal); total += 1
+            if ok:
+                good.append((t, value))
+    return good, total
+
+
+def scale_stats(good):
+    # median, p10, p90 and least-squares slope [g/min] of (time, value) pairs / 中央値・p10・p90・最小二乗の傾き [g/min]
+    t = np.array([g[0] for g in good]); v = np.array([g[1] for g in good])
+    slope = float(np.polyfit((t - t[0]) / 60.0, v, 1)[0]) if len(v) >= 2 and t[-1] > t[0] else float('nan')
+    return float(np.median(v)), float(np.percentile(v, 10)), float(np.percentile(v, 90)), slope
+
+
+def scale_check(a, row_csv):
+    # append one row to scale_check.csv and print the weight / zero-drift judgements
+    # scale_check.csv に 1 行足し、重さの読みとゼロ点のずれを判定して表示する
+    head = ['wall_time_s', 'tag', 'label', 'n_ok', 'n_total', 'median_g', 'p10_g', 'p90_g', 'slope_g_per_min',
+            'nominal_g', 'weight_read_g', 'weight_error_g']
+    prev = list(csv.DictReader(open(row_csv))) if row_csv.exists() else []
+    empties = [r for r in prev if r['label'].startswith('empty') and r['median_g'] not in ('', 'nan')]
+    good, total = scale_read_dir(a.img_dir, json.load(open(a.calib)))
+    if good:
+        # 5-s medians from the first frame, to see whether the scale has settled after the tray was touched
+        # 最初の 1 枚からの 5 秒ごとの中央値。トレイに触れたあと秤が落ち着いたかを見る
+        t0 = good[0][0]; bins = {}
+        for t, v in good:
+            bins.setdefault(int((t - t0) // 5), []).append(v)
+        print('  5-s medians [g]:', ' '.join(f'{5 * k}s:{np.median(v):.2f}' for k, v in sorted(bins.items())))
+        good = [g for g in good if g[0] >= t0 + a.settle_sec]
+    if not good:
+        print(f'scale {a.tag} {a.label}: no readable frames after {a.settle_sec:g} s (of {total}); nothing written'); return
+    med, p10, p90, slope = scale_stats(good); wread = werr = ''
+    line = f'scale {a.tag} {a.label}: ok {len(good)}/{total} median {med:.2f} g (p10 {p10:.2f}, p90 {p90:.2f}) slope {slope:+.3f} g/min'
+    if a.nominal_g is not None and empties:
+        wread = med - float(empties[-1]['median_g']); werr = wread - a.nominal_g
+        line += f' | weight read {wread:.2f} g vs {a.nominal_g:g} g: error {werr:+.2f} g, ratio {wread / a.nominal_g:.4f}'
+    elif a.nominal_g is not None:
+        line += ' | no earlier empty row: weight not computed'
+    print(line)
+    if a.label.startswith('empty') and empties:
+        d = med - float(empties[-1]['median_g'])
+        print(f'  empty median change vs "{empties[-1]["label"]}": {d:+.2f} g' + (f'  ZERO DRIFT > {ZERO_DRIFT_G} g' if abs(d) > ZERO_DRIFT_G else '  (zero stable)'))
+    new = not row_csv.exists()
+    with open(row_csv, 'a', newline='') as f:
+        w = csv.writer(f)
+        if new:
+            w.writerow(head)
+        w.writerow([f'{good[0][0]:.2f}', a.tag, a.label, len(good), total, f'{med:.2f}', f'{p10:.2f}', f'{p90:.2f}', f'{slope:.4f}',
+                    '' if a.nominal_g is None else f'{a.nominal_g:g}', wread if wread == '' else f'{wread:.2f}', werr if werr == '' else f'{werr:+.2f}'])
+
+
+def run_scale(a):
+    # scale check: motor stop, camera for --sec s, then read (or only read --frames-dir) / 秤の確認: 停止して撮影し、読む
+    base = E.OUT; a.audio = False; a.preroll_sec = 0.0
+    if a.frames_dir:
+        a.img_dir = pathlib.Path(a.frames_dir)
+    else:
+        E.OUT = base / a.tag; E.OUT.mkdir(parents=True, exist_ok=True)
+        ctl = Ctl(a.dry_run); ctl.send('motor stop', 'scale check'); cam, _ = start_media(a, ctl)
+        if cam.p is not None:                                          # wait for the first frame, then record --sec
+            for _ in range(150):                                       # 最初の 1 枚を待ってから --sec 撮る
+                if cam.n:
+                    break
+                time.sleep(0.1)
+            time.sleep(a.sec)
+        cam.stop(); ctl.send('motor stop', 'after scale check')
+        (E.OUT / 'run.json').write_text(json.dumps({'args': vars(a), 'frames': cam.n}, indent=1, default=str))
+        a.img_dir = E.OUT / 'img'
+    E.OUT = base
+    scale_check(a, base / 'scale_check.csv')
+
+
 def parse_int_list(s):
     return [int(x) for x in s.split(',') if x.strip() != '']
 
@@ -632,7 +728,18 @@ def main():
     s.add_argument('--keepalive-sec', type=float, default=10.0,
                    help='motor test expiry; re-sent every half of it / motor test の期限（半分ごとに再送）')
     add_args(s)
+    k = sub.add_parser('scale'); k.add_argument('tag'); k.add_argument('--label', required=True)
+    k.add_argument('--sec', type=float, default=20.0); k.add_argument('--nominal-g', type=float)
+    k.add_argument('--settle-sec', type=float, default=0.0,
+                   help='leave out the first seconds (the scale settles after the tray is touched) / 最初の秒数を統計から外す（トレイに触れたあと落ち着くまで）')
+    k.add_argument('--frames-dir', help='only read the images in this folder (no camera, no serial) / この画像だけ読む')
+    k.add_argument('--fps', type=float, default=3.0); k.add_argument('--dry-run', action='store_true')
+    k.add_argument('--dry-run-camera', action='store_true')
+    k.add_argument('--calib', default=str(pathlib.Path(__file__).with_name('scale_calib_2026-11-02b.json')))
+    E.add_common_args(k)
     a = ap.parse_args()
+    if a.cmd == 'scale':
+        E.apply_common_args(a, need_scope=False); E.check_tag(a.tag); return run_scale(a)
     E.apply_common_args(a, need_scope=not a.dry_run)
     # the current scale differs between firmware versions (10 before the 0.01-ohm shunt fix, 1 after): require it explicitly
     # 電流の倍率は機体ソフトの版で違う（0.01 Ω の修正前は 10、後は 1）ので、明示を必須にする

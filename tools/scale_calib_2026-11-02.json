@@ -71,5 +71,29 @@
    "pitch": 79.5,
    "tilt": -6.7
   }
- ]
+ ],
+ "minus": {
+  "_notes": "Minus bar at the far left of the LCD, framing of 2026-11-02 bat1/bat2 (not bat3: bar at x 42-80, y 113-123 there). Darkness = median(background) - 20th pct(bar box): 96-132 with sign, -9..14 without; threshold 45 sits in the gap. \u30de\u30a4\u30ca\u30b9\u68d2\u306e\u691c\u51fa\u7bb1\u3068\u3057\u304d\u3044\u5024\u3002",
+  "bar": [
+   0,
+   38,
+   128,
+   144
+  ],
+  "background": [
+   [
+    0,
+    40,
+    150,
+    165
+   ],
+   [
+    50,
+    100,
+    112,
+    122
+   ]
+  ],
+  "darkness_min": 45
+ }
 }

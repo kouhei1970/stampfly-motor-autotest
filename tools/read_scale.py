@@ -285,7 +285,20 @@ def read_frame(gray, cal):
     dbg = dict(align=align, digits=text, lev=lev, stray=stray, faint=faint, profile=pname, cal=cal)
     if reasons:
         return None, 0, '; '.join(reasons) + ' [%s]' % text.replace(' ', '_'), dbg
-    return float('%s%s.%s%s' % (digits[0].strip(), digits[1], digits[2], digits[3])), 1, '', dbg
+    value = float('%s%s.%s%s' % (digits[0].strip(), digits[1], digits[2], digits[3]))
+    return (-value if minus_on(gray, cal) else value), 1, '', dbg
+
+
+def minus_on(gray, cal):
+    # minus sign: a bar at the far left of the LCD (cal['minus']: bar box and background boxes, frame pixels).
+    # darkness = background median - 20th percentile in the bar box; about 90 with the sign, 9 without (2026-11-02b)
+    # マイナス記号: 表示の左端の横棒。暗さ = 背景の中央値 - 棒の範囲の 20 パーセンタイル。記号ありで約 90、なしで約 9
+    m = cal.get('minus')
+    if not m:
+        return False
+    x0, x1, y0, y1 = m['bar']
+    bg = np.concatenate([gray[b[2]:b[3], b[0]:b[1]].ravel() for b in m['background']])
+    return float(np.median(bg) - np.percentile(gray[y0:y1, x0:x1], 20)) > m['darkness_min']
 
 
 def frames_of(path, cal):

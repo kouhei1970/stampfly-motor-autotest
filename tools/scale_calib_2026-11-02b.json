@@ -1,0 +1,99 @@
+{
+ "_comment": "Calibration of read_scale.py for the 2026-11-02 evening camera framing (digits lower and further left than in scale_calib_2026-11-02.json; only the search region differs). Lengths in pixels of a 640x480 frame at scale 1.",
+ "_geometry_notes": "Lengths are pixels at scale 1. Cell coordinates: u right, v down, origin = digit-cell centre. Four cells (tens, ones, tenths, hundredths); cell pitch, slant (italic), tilt (camera roll, px per cell) are refined per frame from the 'starts'. 長さは拡大率 1 の画素。セルのピッチ・傾き・カメラの回転は 'starts' を初期値に 1 枚ごとに追い込む。",
+ "_seg_gain_notes": "Median darkness of a lit segment a..g relative to the 99.5 percentile ink level, measured on about 500 frames; levels are divided by it. 点灯セグメント a..g の標準的な濃さ（約 500 枚で実測）。濃度をこれで割る。",
+ "_threshold_notes": "on_min: lit segment must reach this (gain-normalised); off_max: unlit segment must stay below; dp_on: decimal point; stray_max/faint_max: share of ink (>stray_ink / >faint_ink) outside the predicted segments; cost_max: fit misfit. 判定しきい値。",
+ "frame_size": [
+  640,
+  480
+ ],
+ "region": {
+  "x0": 220,
+  "x1": 575,
+  "y0": 110,
+  "y1": 305
+ },
+ "bg_box": 41,
+ "min_ink_level": 25,
+ "ink_mask_frac": 0.4,
+ "min_col_px": 3,
+ "min_row_px": 6,
+ "run_gap_px": 10,
+ "g_max_height_px": 70,
+ "g_min_x": 600,
+ "search": {
+  "dx": 40,
+  "dy": 20,
+  "scale": 0.15,
+  "keep": 5,
+  "stray_weight": 4.0
+ },
+ "thresholds": {
+  "on": 0.5,
+  "on_min": 0.7,
+  "off_max": 0.2,
+  "dp_on": 0.4,
+  "stray_ink": 0.5,
+  "stray_max": 0.15,
+  "cost_max": 3.0,
+  "faint_ink": 0.2,
+  "faint_max": 0.15
+ },
+ "geometry": {
+  "half_width": 22.5,
+  "half_height": 51.0,
+  "stroke": 10,
+  "seg_inset": 12,
+  "points_per_seg": 5,
+  "dp_u": 0.0,
+  "dp_v": 46.5,
+  "stray_dilate": 5,
+  "seg_gain": [
+   0.98,
+   0.85,
+   0.77,
+   0.82,
+   0.75,
+   0.84,
+   0.83
+  ]
+ },
+ "starts": [
+  {
+   "name": "low-tilt",
+   "slant": 0.215,
+   "pitch": 85.0,
+   "tilt": -1.5
+  },
+  {
+   "name": "high-tilt",
+   "slant": 0.265,
+   "pitch": 79.5,
+   "tilt": -6.7
+  }
+ ],
+ "minus": {
+  "bar": [
+   15,
+   62,
+   192,
+   210
+  ],
+  "background": [
+   [
+    15,
+    62,
+    214,
+    232
+   ],
+   [
+    70,
+    120,
+    178,
+    186
+   ]
+  ],
+  "darkness_min": 45,
+  "_notes": "Boxes [x0, x1, y0, y1] in frame pixels for this framing. Measured darkness: 89-93 with the sign, 8-10 without. / この画角での範囲。"
+ }
+}
