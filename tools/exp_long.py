@@ -464,6 +464,9 @@ def run_steps(a, ctl, sc, stop):
         if stop.is_set():
             break
         row['power_before'] = ctl.power() or ''
+        pw = A.parse_power(row['power_before']) if row['power_before'] else None
+        if pw and pw[0] < a.vmin:                 # CLI voltage at the pre duty / 段差前の Duty での CLI の電圧
+            ctl.event('stop_reason', f'CLI voltage {pw[0]:.2f} V < vmin {a.vmin} V'); stop.set(); break
         if a.dry_run:
             sc.step = (pre / 100, post / 100)
         # the scope accepts a trigger only about 0.45 s after SING over LAN (measured 2026-11-02); its status
@@ -525,6 +528,7 @@ def main():
     s = sub.add_parser('step'); s.add_argument('tag')
     s.add_argument('--steps', default='0:60,60:68,68:60,50:80,80:50,60:0')
     s.add_argument('--pre-sec', type=float, default=2.5); s.add_argument('--tb', type=float, default=0.1)
+    s.add_argument('--vmin', type=float, default=3.5, help='stop below this CLI voltage at the pre duty / 段差前の電圧の下限')
     # 6M at 0.1 s/div = 5 MS/s, as the 10-15 spin-downs; the readout takes about 48 s
     # 6M・0.1 s/div で 5 MS/s（10-15 のスピンダウンと同じ）。読み出しは約 48 秒
     s.add_argument('--mdep', type=int, default=6000000)
